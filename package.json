@@ -1,0 +1,11 @@
+{
+  "name": "theshft-crypto",
+  "version": "3.4.0",
+  "description": "Signal-compatible E2E encryption module for theSHFT messenger (HKDF, X3DH, Double Ratchet)",
+  "main": "encryption.js",
+  "license": "MIT",
+  "dependencies": {
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-util": "^0.15.1"
+  }
+}
