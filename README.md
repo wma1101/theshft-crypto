@@ -1,4 +1,4 @@
-# theSHFT Crypto v3.4.0
+# theSHFT Crypto v4.0.0
 
 End-to-end encryption module used by [theSHFT](https://theshft.app). Signal-compatible protocol implementation.
 
