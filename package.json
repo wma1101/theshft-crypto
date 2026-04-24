@@ -1,6 +1,6 @@
 {
   "name": "theshft-crypto",
-  "version": "3.4.0",
+  "version": "4.0.0",
   "description": "Signal-compatible E2E encryption module for theSHFT messenger (HKDF, X3DH, Double Ratchet)",
   "main": "encryption.js",
   "license": "MIT",
