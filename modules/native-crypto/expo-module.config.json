@@ -1,0 +1,9 @@
+{
+  "platforms": ["ios", "android"],
+  "ios": {
+    "modules": ["NativeCryptoModule"]
+  },
+  "android": {
+    "modules": ["com.willieaustin.shift.nativecrypto.NativeCryptoModule"]
+  }
+}

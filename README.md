@@ -1,226 +1,148 @@
-# theSHFT Crypto v7.1.0
+# theSHFT encryption module
 
-End-to-end encryption module used by [theSHFT](https://theshft.app). Signal-compatible protocol with ML-KEM-768 post-quantum hybrid encryption (active).
+This repository is a verbatim mirror of `config/encryption.js`, the file
+theSHFT (theshft.app) ships inside its iOS and Android apps. It is published
+so the protocol can be read and reviewed. The app, the server, the
+moderation code and the Firestore rules are closed source; only this module
+is published.
 
-## Protocol Overview
+Mirrored from app commit `3d4616a6dc31f6a0060b515087dbdcab0fa970e7`, app
+version 9.4.1. See `MANIFEST.json` for the exact commit and file hash, and
+`PARITY.json` for the value the app's own test suite checks against on every
+tagged release. The security of the app does not rest on this code staying
+secret (Kerckhoffs's principle): the same JavaScript already ships inside
+every installed copy of the app. Publishing changes who can read it, not
+what exists.
 
-theSHFT uses the same encryption protocol as Signal, plus an active post-quantum hybrid layer powered by the PQClean reference implementation of ML-KEM-768 (NIST FIPS 203). Every message is encrypted with both Curve25519 and ML-KEM-768 — an attacker must break BOTH to recover the plaintext.
+## What this repository republishes
 
-- **HKDF-SHA256** (RFC 5869) for all key derivation
-- **X3DH** (Extended Triple Diffie-Hellman) for session establishment
-- **Double Ratchet** with per-message forward secrecy
-- **Curve25519** for Diffie-Hellman key exchange
-- **XSalsa20-Poly1305** for authenticated message encryption
-- **ML-KEM-768** (CRYSTALS-Kyber, NIST FIPS 203) for post-quantum hybrid encryption — active on 1:1 chats (groups use classical Sender Keys)
-- **Sender Keys** for efficient group encryption
-- **Sealed Sender** for sender-identity hiding from the server
-- **Cross-signing** for device verification
+- `config/encryption.js`: the shipped file, unmodified.
+- `config/pinValidation.js`, `config/senderKeyRotation.js`,
+  `config/safetyNumberQr.js`: pure supporting modules the tests below
+  exercise directly.
+- `test-utils/nativeCryptoTestDouble.js` and the vendored tests under
+  `__tests__/` and `tests/`: the same protocol tests the app runs, adjusted
+  only so they run under plain Node instead of inside the app.
+- `modules/native-crypto/`: the vendored ML-KEM-768 native module, the
+  PQClean reference C sources, the iOS Swift/Objective-C bridge and the
+  Android JNI bridge, exactly as shipped. This code cannot run outside an
+  iOS or Android build; the test suite here substitutes a pure JavaScript
+  ML-KEM-768 implementation (`@noble/post-quantum`) with matching key and
+  ciphertext sizes so the protocol logic is still exercised on every commit.
+- `shims/`: thin stand-ins for app-only modules `config/encryption.js`
+  imports (local storage, Firestore, React Native, Expo, telemetry). None of
+  them touch cryptography; each one is a few lines and is listed below.
 
-## Key Derivation (Signal-Compatible)
+## What is in scope, and what is not
 
-### KDF Chain Step
+**In scope, verified against the file in this repository:**
+
+- Direct messages: X3DH key agreement plus a Double Ratchet, using
+  Curve25519 (TweetNaCl) and HKDF.
+- A post quantum hybrid on direct messages: an ML-KEM-768 (FIPS 203) secret
+  is mixed into the session root key, but only when the recipient's prekey
+  bundle carries a PQ prekey and the native ML-KEM module loads. This
+  happens once, at session start (X3DH), not per message. When either
+  condition is not met, the session runs classically and nothing refuses
+  or warns about that fallback today (see Known limits).
+- Groups: a Sender Key wrapped with the same X25519/ML-KEM hybrid HKDF, but
+  only when every member of the group has published a PQ public key. Group
+  PQ is all-or-nothing per key; a single classical member drops the whole
+  group key back to classical.
+- The Sender Key ratchet is per message (one key per message, one-way
+  chain), which limits exposure from a single compromised message key but
+  does not yet delete spent ratchet state.
+- The PIN key derivation is PBKDF2-HMAC-SHA256 at 600,000 iterations on
+  every path that sets or checks a PIN today. Lower iteration counts appear
+  only as legacy values the verify path still accepts for PINs set before
+  the count was raised.
+- PBKDF2, SHA-256 and HMAC run through each platform's native crypto
+  (CommonCrypto on iOS, `javax.crypto` on Android) when available, with a
+  pure JavaScript fallback. ML-KEM-768 runs through the vendored PQClean C
+  library, compiled natively; the JavaScript layer never implements the
+  lattice math itself.
+
+**Explicitly not in scope, and not claimed:**
+
+- No sealed sender. There is no code on the send path that hides sender
+  identity from the server; a receive-side branch exists but nothing calls
+  the corresponding send path today.
+- No cross-signing or device-verification protocol beyond the safety number
+  comparison in `config/safetyNumberQr.js`.
+- No TreeKEM/MLS. Groups use Sender Key, not a tree-based group protocol.
+- No external security audit has been commissioned on this code or on the
+  app. This repository is a transparency step, not an audit result.
+- This repository is a protocol mirror, not the app. It does not prove the
+  compiled app binary matches this source; it proves the source the app was
+  built from matches what ships here, checked by file hash.
+
+## Known limits (tracked, with fix status)
+
+1. **The post quantum prekey is not signed.** `generateSignedPrekey` signs
+   only the classical X25519 prekey bytes; the ML-KEM-768 prekey it returns
+   alongside it is unsigned. A network attacker who can substitute prekeys
+   could therefore substitute the PQ prekey without detection today.
+   Status: fix in progress (see the app repository's
+   `docs/plans/2026-09-18-prekey-binding.md`, "release A"): sign the PQ
+   prekey with the same identity signing key and bind the signing public key
+   into the safety number.
+2. **A downgrade to classical is not refused.** When a peer's bundle has no
+   PQ prekey, or the native ML-KEM module fails to load, the session falls
+   back to classical X3DH silently. There is no local warning and no refusal
+   to proceed. Status: the same prekey-binding release above adds a refusal
+   when a peer has previously advertised a PQ key and stops advertising one.
+3. **The identity signing key is self-published.** There is no third party
+   or transparency log attesting to a user's public key; a compromised
+   server could present a substituted key to a new contact. This is the same
+   trust model as an unaudited TOFU (trust-on-first-use) safety number
+   comparison, not a signed key directory. Status: no fix scheduled; the
+   safety number comparison flow is the mitigation today.
+
+This section names known weaknesses with enough specificity that a reader
+does not need to find them independently. It will be updated, not deleted,
+as each item's status changes.
+
+## What this repository does not vendor
+
+`__tests__/senderKeyRatchet.test.js` originally ended with a
+"chat.js dispatch census" suite that reads `app/chat.js` by file path to
+check the app's message-dispatch code calls the ratchet decoder correctly.
+`app/chat.js` is an app screen, not part of the encryption module, so that
+suite is not vendored here; the codec-level tests in the rest of the file
+(derivation, wire encoding, fail-closed decode) are unaffected and still
+run.
+
+## Testing
+
 ```
-message_key  = HMAC-SHA256(chain_key, 0x01)
-next_chain   = HMAC-SHA256(chain_key, 0x02)
+npm ci
+npm test
 ```
 
-### KDF Root Step
-```
-(root_key, chain_key) = HKDF(
-  salt = current_root_key,
-  ikm  = DH_output,
-  info = "WhisperRatchet",
-  len  = 64
-)
-```
+This runs the vendored protocol tests (`__tests__/`) against
+`config/encryption.js`, using `test-utils/nativeCryptoTestDouble.js` in
+place of the native ML-KEM-768 module (wired through `jest.config.js`'s
+`moduleNameMapper`, the same mapping the app repository uses in its own
+test suite). A public GitHub Actions workflow
+(`.github/workflows/vectors.yml`) runs the same tests, plus a standalone
+ML-KEM-768 known-answer check against `@noble/post-quantum`, on every push
+and pull request.
 
-### X3DH Master Secret
-```
-IKM = 0xFF[32] || DH1 || DH2 || DH3 [|| DH4]
-master_secret = HKDF(
-  salt = 0x00[32],
-  ikm  = IKM,
-  info = "theSHFT_X3DH_v2",
-  len  = 32
-)
-```
+## Republishing (for the owner)
 
-Where:
-- `DH1 = DH(sender_identity, recipient_signed_prekey)`
-- `DH2 = DH(sender_ephemeral, recipient_identity)`
-- `DH3 = DH(sender_ephemeral, recipient_signed_prekey)`
-- `DH4 = DH(sender_ephemeral, recipient_one_time_prekey)` (if available)
-- `0xFF[32]` — discontinuity bytes (prevents invalid curve attacks)
+`scripts/publish-crypto-repo.js` in the app repository regenerates this
+repository's `config/`, `test-utils/`, vendored `__tests__/`, `modules/`,
+`MANIFEST.json` and `PARITY.json` from the app's shipped (git `HEAD`) file.
+Run it, review the diff, commit on a branch here, then tag the release
+(`v<app version>`) once merged to `main`. The app repository's
+`__tests__/cryptoParity.test.js` and its tag-gated `crypto-parity` CI job
+check that the hash shown in the app's About screen still matches
+`PARITY.json` here.
 
-## X3DH Key Agreement
+## Reporting a vulnerability
 
-1. Each user publishes signed prekeys (rotated every 7 days) and one-time prekeys to the server.
-2. Signed prekeys are verified via Ed25519 signatures derived from the identity key.
-3. The sender performs 3–4 DH operations against the recipient's prekey bundle.
-4. Both sides derive the same master secret via HKDF without ever transmitting it.
-5. One-time prekeys are consumed atomically via a rate-limited Cloud Function (5 per hour per user).
-6. Previous signed-prekey private key is retained for a 48-hour grace period after rotation.
-
-## Double Ratchet (Forward Secrecy)
-
-Each conversation maintains a ratchet session with:
-- **Root key** that evolves with each DH ratchet step
-- **Send chain key** and **receive chain key** for symmetric ratcheting
-- **Ephemeral DH key pairs** that rotate on each send/receive direction change
-
-### Per-message procedure
-
-1. Each message derives a unique encryption key from the chain via HMAC.
-2. The chain advances and the old key is securely zeroed (forward secrecy).
-3. When the conversation direction changes, a DH ratchet step occurs:
-   - New ephemeral key pair generated.
-   - DH with the other party's ephemeral key.
-   - Root key and chain keys rotated via HKDF.
-4. Compromising one message key cannot reveal past or future messages.
-
-### Out-of-order handling
-- Up to 256 skipped message keys cached per session (DoS cap).
-- Skipped keys indexed by `(chain_id, message_index)` for cross-chain lookup.
-- Keys securely zeroed after use.
-
-### Session persistence
-- Sessions encrypted at rest using NaCl secretbox.
-- Encryption key stored in device Keychain / SecureStore.
-- Sessions survive app restarts but not device wipes.
-
-## ML-KEM-768 Post-Quantum Hybrid
-
-theSHFT ships a hybrid encryption path that combines classical Curve25519 with ML-KEM-768 (CRYSTALS-Kyber, NIST FIPS 203) so that breaking the message requires breaking *both* X25519 *and* the post-quantum lattice problem.
-
-### PQ Functions
-- `pqGenerateKeyPair` — generate ML-KEM-768 key pair.
-- `pqEncapsulate` — derive shared secret + ciphertext from recipient's PQ public key.
-- `pqDecapsulate` — recover shared secret using PQ private key.
-- `derivePqKeysFromPhrase` — deterministic PQ key derivation from BIP39 recovery phrase.
-
-### Hybrid Encrypt
-```
-classical_secret = ECDH(my_priv_x25519, their_pub_x25519)
-pq_secret, pq_ct = ML-KEM-768.encap(their_pq_pub)
-combined_key     = SHA-256(classical_secret || pq_secret || "hybrid_v1")
-ciphertext       = NaCl.secretbox(pad256(plaintext), nonce, combined_key)
-wire             = "hybrid:" + b64(nonce) + ":" + b64(ciphertext)
-```
-
-The PQ ciphertext (`pq_ct`) is delivered alongside the message envelope. The recipient combines `ML-KEM-768.decap(my_pq_priv, pq_ct)` with the classical ECDH output, derives the same `combined_key`, and decrypts.
-
-### Status
-
-**ACTIVE in 7.1.0.** Implementation: the PQClean reference port of ML-KEM-768 is vendored in `modules/native-crypto/cpp/mlkem768/` and compiled natively on each platform:
-
-- **iOS:** CocoaPod compiles the C sources alongside the Swift module; the Objective-C `MLKEMBridge` wraps PQClean's `_derand` API. Coins are sourced from `SecRandomCopyBytes`.
-- **Android:** NDK + CMake (`android/CMakeLists.txt`) builds `libmlkem768.so`; the JNI wrapper (`android/src/main/cpp/mlkem_jni.c`) bridges to Kotlin. Coins are sourced from `java.security.SecureRandom`.
-
-The pure-JS `mlkem` package was retired — its ESM `package.exports` was incompatible with Metro under Hermes lazy-loading. PQClean is constant-time C from the canonical NIST-PQC repository, audited for side-channel resistance.
-
-Runtime kill-switch: `_pqDisabled = true` in `config/encryption.js` forces classical-only fallback without a code push.
-
-## Sender Keys (Group Encryption)
-
-Group messages use Sender Keys instead of per-recipient encryption to keep send cost O(1) regardless of group size:
-
-- `generateSenderKey` — fresh chain key per sender per group.
-- `rotateSenderKey` — automatic rotation every 100 messages by default.
-- `decryptWithKeyChain` — derive any past message key from the current chain.
-- `distributeSenderKey` — encrypted delivery to each member.
-- `receiveSenderKey` — incorporate a peer's sender key into your local store.
-
-Sender Key distributions themselves use the underlying X3DH/Ratchet 1-to-1 channel.
-
-## Sealed Sender
-
-Server-side metadata is stripped — the server only sees `'sealed'` for the message's `from` and `fromUsername` fields:
-
-- `generateSenderCertificate` (Ed25519, certificate version 2) — short-lived sender cert signed by your identity key.
-- `verifySenderCertificate` — recipient verifies cert + signature.
-- `sealMessage` / `unsealMessage` — wrap / unwrap the envelope.
-- Server-side `actualSenderId` validation in the messaging Cloud Function.
-
-Wire prefix: `sealed:<recipientId>:<nonce_b64>:<ciphertext_b64>`.
-
-## Wire Formats
-
-| Prefix | Meaning |
-|---|---|
-| `nacl:<nonce>:<ct>` | Legacy NaCl box, unpadded |
-| `naclp:<nonce>:<ct>` | NaCl box, padded |
-| `ratchet:<pn>:<i>:<nonce>:<ct>:<eph_pub>` | Double Ratchet message |
-| `hybrid:<nonce>:<ct>` | Curve25519 + ML-KEM-768 hybrid (active) |
-| `sealed:<recipientId>:<nonce>:<ct>` | Sealed sender envelope |
-| `ENCNP:<header><nonce>:<ct>` | Encrypted media (padded) |
-| `ENCN:<nonce>:<ct>` | Encrypted media (unpadded) |
-
-## Other Primitives
-
-### Message Padding
-Messages padded to 256-byte buckets with a 4-byte length prefix and random fill. Prevents traffic analysis from revealing message length. Used on every encrypt path: 1-to-1 box, media, ratchet, hybrid, sender keys, MLS.
-
-### Cross-Signing
-Multi-device key signing for trust transfer:
-- `generateCrossSigningKeys` — master, self-signing, user-signing keys.
-- `signDeviceKey` — sign a new device's identity key from a verified device.
-- `verifyDeviceSignature` — recipient verifies a device key chain.
-- `verifyCrossSigningChain` — verify a contact's cross-signing chain.
-- `signUserMasterKey` — sign a contact's master key after verification.
-
-### Safety Numbers
-Each conversation has a unique 60-digit safety number derived from both users' identity public keys for out-of-band verification:
-- `computeSafetyNumber(myIdentity, theirIdentity)`
-- `checkKeyChange(theirCachedIdentity, theirCurrentIdentity)`
-- `acknowledgeKeyChange(conversationId, newKey)`
-
-### TreeKEM / MLS Scaffolding
-Group epoch keying primitives present for future migration:
-- `generateTreeKEMLeaf`
-- `computeTreePath`
-- `deriveGroupEpochKey`
-- `encryptMLS` / `decryptMLS`
-
-### Backup Encryption
-Passphrase-based offline backup:
-- `deriveBackupKey(passphrase, salt)` — Argon2-equivalent KDF (PBKDF2 fallback).
-- `encryptBackup(plaintext, key)`
-- `decryptBackup(ciphertext, key)`
-
-### PBKDF2 PIN Hashing
-User PINs are hashed with PBKDF2-HMAC-SHA256 at 10,000 iterations with a per-user random salt. Native acceleration via `react-native-quick-crypto` (10–50× faster than pure JS).
-
-### Secure Shred
-Multi-pass overwrite for sensitive material:
-- `secureShred(buffer)` — overwrite, then zero.
-- `secureShredBatch([buffers])`
-- `secureShredSession(sessionId)` — purge ratchet session + all derived keys.
-
-### Emergency Kill Switch
-The ratchet can be disabled at runtime via a SecureStore flag (`KEYS.RATCHET_ENABLED = false`) without a code update. Falls back to legacy NaCl box encryption.
-
-### Sealed Sender Server Validation
-The Cloud Function that delivers sealed messages independently validates that the unsealed `actualSenderId` is a participant of the destination conversation, preventing impersonation via sealed envelopes.
-
-## What's NOT in this repo
-
-- App UI, navigation, screens
-- Firebase / Firestore configuration
-- Cloud Functions (one-time prekey consumption, message delivery, cleanup)
-- Business logic
-- Server infrastructure (Go relay, R2 worker)
-
-This repo contains only the cryptographic primitives. The full app is private.
-
-## Dependencies
-
-- `tweetnacl` ^1.0.3
-- `tweetnacl-util` ^0.15.1
-- `tweetnacl-sealed-box` ^1.1.0
-- `bip39` ^3.1.0 (recovery phrase)
-- `react-native-quick-crypto` (native PBKDF2 / SHA / HMAC acceleration)
-- **PQClean ML-KEM-768** (vendored C source, MIT-equivalent license — see `modules/native-crypto/cpp/mlkem768/LICENSE`)
+See `SECURITY.md`.
 
 ## License
 
-MIT
+MIT. See `LICENSE`.

@@ -1,0 +1,9 @@
+{
+  "file": "config/encryption.js",
+  "sha256": "f73e977b33999d0b32398a1c2d3f0e5c4e6cfc880b33aa6b4b3a641257b1f822",
+  "hashPrefix12": "f73e977b3399",
+  "appCommit": "3d4616a6dc31f6a0060b515087dbdcab0fa970e7",
+  "appVersion": "9.4.1",
+  "algorithm": "sha256 of the raw file bytes, git show <commit>:config/encryption.js | shasum -a 256",
+  "checkedBy": "the app repo's __tests__/cryptoParity.test.js on tagged releases (.github/workflows/ci.yml, crypto-parity job)"
+}

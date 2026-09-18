@@ -1,0 +1,20 @@
+name: Crypto vectors
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm ci
+      - name: Run the vendored protocol test suite
+        run: npx jest --ci
+      - name: ML-KEM-768 known-answer check against @noble/post-quantum
+        run: node tests/crypto-vectors.js
