@@ -76,9 +76,9 @@ of the app. Publishing changes who can read it, not what exists.
 
 **Explicitly not in scope, and not claimed:**
 
-- No sealed sender. There is no code on the send path that hides sender
-  identity from the server; a receive-side branch exists but nothing calls
-  the corresponding send path today.
+- No sender identity hiding on the send path: the server sees who sent each
+  message. A receive side branch for hidden sender envelopes exists, but
+  nothing calls the corresponding send path today, so it is not a feature.
 - No cross-signing or device-verification protocol beyond the safety number
   comparison in `config/safetyNumberQr.js`.
 - No TreeKEM/MLS. Groups use Sender Key, not a tree-based group protocol.
