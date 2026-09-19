@@ -152,5 +152,4 @@ describe('dual-read routing and independence', () => {
 // The vendored copy of this file drops the "chat.js dispatch census" suite
 // that followed here: it reads app/chat.js by path, an app screen this
 // repository does not carry (see README.md, "What this repository does
-// not vendor"). The codec-level tests above still cover skr1 derivation,
-// wire encoding and decode fail-closed behavior.
+// not vendor"). The codec-level tests above are unaffected.

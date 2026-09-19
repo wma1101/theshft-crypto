@@ -16,5 +16,5 @@ jobs:
         run: npm ci
       - name: Run the vendored protocol test suite
         run: npx jest --ci
-      - name: ML-KEM-768 known-answer check against @noble/post-quantum
+      - name: NaCl and PBKDF2 known-answer vectors (box, secretbox, nonces, BIP39, RFC 6070, replay, ordering, sender key rotation)
         run: node tests/crypto-vectors.js

@@ -16,42 +16,7 @@ import {
   encodeUTF8, decodeUTF8,
   encodeBase64, decodeBase64,
 } from 'tweetnacl-util';
-// Platform is read only to pick the PBKDF2 backend (WebCrypto on web, native
-// quick-crypto elsewhere). babel-preset-expo inlines Platform.OS on web, so the
-// native branch is pruned from the browser bundle. Added 2026-09-16 (P2-C).
-import { Platform } from 'react-native';
 import { traces, endTrace } from './perfTracing';
-import { WEB_DEV_PHRASE_RESTORE } from './environment';
-
-// ============================================
-// WEB IDENTITY GUARD (2026-09-16, P2-E)
-// ============================================
-// A web build never derives, stores or restores a recovery phrase. The
-// browser is a linked device in the product and the phone is the identity
-// root (docs/multi-device-linking-design.md section 2): the phrase, the
-// identity private key and the duress PIN live on the phone only. This is
-// enforced HERE, at the functions that would derive or hold the phrase, and
-// not only on the screens, because every public route is reachable by URL and
-// a screen guard alone would leave the derivation one pasted path away.
-//
-// The one exception is the staging dev bring-up flag (config/environment.js
-// WEB_DEV_PHRASE_RESTORE): inlined at bundle time, never true in production,
-// it lets a developer restore a throwaway staging account in a browser before
-// the link flow exists. With it set, every function below behaves exactly as
-// on a phone. babel-preset-expo inlines Platform.OS on web, so on native the
-// predicate is a constant false and the guard costs nothing.
-//
-// PIN hashing and verification are deliberately NOT guarded: a linked browser
-// keeps its own local PIN (hashPin/verifyUnlockPin through the WebCrypto
-// PBKDF2 branch and config/secureStoreWeb.js).
-const WEB_PHRASE_BLOCKED = Platform.OS === 'web' && !WEB_DEV_PHRASE_RESTORE;
-export const WEB_PHRASE_GUARD_MESSAGE =
-  'A web build never derives, stores or restores a recovery phrase. Link this browser from your phone instead.';
-/** True when this bundle is a web build without the staging dev flag. */
-export const isWebPhraseBlocked = () => WEB_PHRASE_BLOCKED;
-const refuseWebPhrase = (op) => {
-  console.log(`[web identity guard] ${op} refused. ${WEB_PHRASE_GUARD_MESSAGE}`);
-};
 
 // Secure storage keys (prefixed to avoid conflicts)
 // Keychain labels use generic names to avoid revealing the app's purpose
@@ -750,62 +715,17 @@ const hmacSha256 = (key, message) => {
  */
 // Native PBKDF2 via react-native-quick-crypto — 10-50x faster than JS
 let _quickCrypto = null;
-// 2026-09-16 (P2-C): never require quick-crypto on web. Metro maps the package
-// to a stub there (metro.config.js WEB_STUBBED_MODULES) and the real module
-// cannot load in a browser anyway, so the require only produced a
-// "quick-crypto failed to load" line on every page load. Web PBKDF2 runs
-// through WebCrypto inside pbkdf2HmacSha256 below.
-if (Platform.OS !== 'web') {
-  try {
-    _quickCrypto = require('react-native-quick-crypto');
-    if (_quickCrypto && typeof _quickCrypto.pbkdf2 === 'function') {
-      console.log('[Crypto] Native PBKDF2 loaded (react-native-quick-crypto)');
-    } else {
-      console.log('[Crypto] quick-crypto loaded but pbkdf2 not found, keys:', Object.keys(_quickCrypto || {}).join(', '));
-      _quickCrypto = null;
-    }
-  } catch (e) {
-    console.log('[Crypto] quick-crypto failed to load:', e?.message);
+try {
+  _quickCrypto = require('react-native-quick-crypto');
+  if (_quickCrypto && typeof _quickCrypto.pbkdf2 === 'function') {
+    console.log('[Crypto] Native PBKDF2 loaded (react-native-quick-crypto)');
+  } else {
+    console.log('[Crypto] quick-crypto loaded but pbkdf2 not found, keys:', Object.keys(_quickCrypto || {}).join(', '));
+    _quickCrypto = null;
   }
+} catch (e) {
+  console.log('[Crypto] quick-crypto failed to load:', e?.message);
 }
-
-// Hex salt to bytes for the WebCrypto branch: the same loop the quick-crypto
-// and JS branches below run inline, kept identical so no backend can see
-// different salt bytes for the same saltHex (a non-hex pair decodes to 0 on
-// every path, which is why the hex equality below holds even for legacy salts).
-const pbkdf2SaltBytes = (saltHex) => {
-  const saltBytes = new Uint8Array(saltHex.length / 2);
-  for (let i = 0; i < saltBytes.length; i++) {
-    saltBytes[i] = parseInt(saltHex.substring(i * 2, i * 2 + 2), 16);
-  }
-  return saltBytes;
-};
-
-/**
- * PBKDF2-HMAC-SHA256 over WebCrypto (browser only). Added 2026-09-16 (P2-C).
- *
- * WHY: with quick-crypto stubbed on web, every KDF fell to the synchronous JS
- * loop, and 600K iterations of the array-based sha256Bytes freeze the tab for
- * seconds (twice per unlock, verifyUnlockPin hashes main and duress). The
- * browser's crypto.subtle runs the same PBKDF2-HMAC-SHA256 off the main
- * thread. Same password bytes (decodeUTF8), same salt decode, same iteration
- * count and a 32-byte output, so the hex it returns is byte-identical to the
- * quick-crypto and JS paths; __tests__/pbkdf2Web.test.js proves that against
- * the JS implementation and the RFC 6070 / RFC 7914 vectors.
- */
-const pbkdf2HmacSha256WebCrypto = async (password, saltHex, iterations) => {
-  const subtle = globalThis.crypto.subtle;
-  const key = await subtle.importKey('raw', decodeUTF8(password), { name: 'PBKDF2' }, false, ['deriveBits']);
-  const bits = await subtle.deriveBits(
-    { name: 'PBKDF2', hash: 'SHA-256', salt: pbkdf2SaltBytes(saltHex), iterations },
-    key,
-    256,
-  );
-  return bytesToHex(new Uint8Array(bits));
-};
-
-const hasWebCryptoPbkdf2 = () => typeof globalThis !== 'undefined'
-  && typeof globalThis.crypto?.subtle?.deriveBits === 'function';
 
 /**
  * PBKDF2-HMAC-SHA256 with native acceleration.
@@ -815,24 +735,6 @@ const hasWebCryptoPbkdf2 = () => typeof globalThis !== 'undefined'
  */
 const pbkdf2HmacSha256 = (password, saltHex, iterations) => {
   const traceId = traces.pbkdf2();
-
-  // Web: WebCrypto first, iterations passed through unchanged. On any throw
-  // resolve to the JS implementation, mirroring the native error path below.
-  // Every caller already awaits (hashPin, deriveKeysFromPhrase,
-  // deriveBackupKey, verifyUnlockPin), so returning a Promise here is the
-  // same contract the quick-crypto branch has always had.
-  if (Platform.OS === 'web' && hasWebCryptoPbkdf2()) {
-    return pbkdf2HmacSha256WebCrypto(password, saltHex, iterations)
-      .then((hex) => {
-        endTrace(traceId);
-        return hex;
-      })
-      .catch((e) => {
-        console.warn('[Crypto] WebCrypto PBKDF2 failed, falling back to JS:', e?.message);
-        endTrace(traceId);
-        return pbkdf2HmacSha256JS(password, saltHex, iterations);
-      });
-  }
 
   // Try native PBKDF2 first (async but dramatically faster — runs on native thread)
   if (_quickCrypto) {
@@ -1009,42 +911,31 @@ export const getOrCreateKeyPair = async () => {
 
       // SecureStore empty — try to re-derive from stored recovery phrase
       // This ensures keys always match what's in Firestore (phrase-derived)
-      //
-      // Web identity guard (2026-09-16, P2-E): skipped outright on a web build
-      // without the dev flag. getIdentityPhrase and deriveKeysFromPhrase each
-      // refuse on their own there, but the branch is skipped explicitly so the
-      // rule is visible at the one place the identity is chosen, not implied
-      // by two nulls. A linked browser (P1) gets its identity from device
-      // keys, never from a phrase, so it falls through to the branches below.
-      if (WEB_PHRASE_BLOCKED) {
-        refuseWebPhrase('getOrCreateKeyPair phrase re-derive');
-      } else {
-        try {
-          const { getIdentityPhrase } = require('./storage');
-          const { getLocal, KEYS } = require('./storage');
-          const activeIdentity = await getLocal(KEYS.ACTIVE_IDENTITY);
-          if (activeIdentity) {
-            const phrase = await getIdentityPhrase(activeIdentity);
-            if (phrase) {
-              console.log('Re-deriving keys from stored recovery phrase');
-              // Look up derivationVersion from Firestore to use correct KDF
-              let version = 'v3'; // Default to v3 for existing accounts
-              try {
-                const { getDb } = require('./database');
-                const { doc, getDoc } = require('firebase/firestore');
-                const userDocSnap = await getDoc(doc(getDb(), 'users', activeIdentity));
-                if (userDocSnap.exists()) {
-                  version = userDocSnap.data().derivationVersion || 'v3';
-                }
-              } catch (fbErr) {
+      try {
+        const { getIdentityPhrase } = require('./storage');
+        const { getLocal, KEYS } = require('./storage');
+        const activeIdentity = await getLocal(KEYS.ACTIVE_IDENTITY);
+        if (activeIdentity) {
+          const phrase = await getIdentityPhrase(activeIdentity);
+          if (phrase) {
+            console.log('Re-deriving keys from stored recovery phrase');
+            // Look up derivationVersion from Firestore to use correct KDF
+            let version = 'v3'; // Default to v3 for existing accounts
+            try {
+              const { getDb } = require('./database');
+              const { doc, getDoc } = require('firebase/firestore');
+              const userDocSnap = await getDoc(doc(getDb(), 'users', activeIdentity));
+              if (userDocSnap.exists()) {
+                version = userDocSnap.data().derivationVersion || 'v3';
               }
-              const derived = await deriveKeysFromPhrase(phrase, { version });
-              if (derived?.privateKey && derived?.publicKey) return derived;
+            } catch (fbErr) {
             }
+            const derived = await deriveKeysFromPhrase(phrase, { version });
+            if (derived?.privateKey && derived?.publicKey) return derived;
           }
-        } catch (e) {
-          console.log('Could not re-derive keys from phrase:', e.message);
         }
+      } catch (e) {
+        console.log('Could not re-derive keys from phrase:', e.message);
       }
 
       // Last resort: generate random keys — ONLY for a brand-new account that
@@ -1816,17 +1707,6 @@ export const decryptMediaUrlToFile = async (url, keyB64, mimeHint) => {
     if (!plain) return null;
     await new Promise(r => setTimeout(r, 0));
     const mime = mimeHint || resp.headers.get('content-type') || 'video/mp4';
-    // Web (2026-09-16, P2-F2): a browser has no cache directory. expo-file-
-    // system's web File only console.warns and Paths.cache warns on every
-    // read, so the write below threw and this returned null after two
-    // warnings per story. The plaintext stays in this tab's memory behind a
-    // blob: URL, which expo-image and expo-video accept, and app/status.js
-    // revokes it in the same sweep that deletes the story_* files on a
-    // phone. Nothing about the decryption above changes.
-    if (Platform.OS === 'web') {
-      if (typeof Blob !== 'function' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return null;
-      return URL.createObjectURL(new Blob([plain], { type: mime }));
-    }
     const ext = mime.split('/')[1]?.split(';')[0] || 'bin';
     // Write the decrypted bytes straight to disk via the new FileSystem File
     // API. Avoids encodeBase64(plain) (a full-size base64 string the legacy
@@ -1985,9 +1865,6 @@ const PHRASE_KDF_ITERATIONS_V6 = 600000;
 
 export const deriveKeysFromPhrase = async (phrase, options = {}) => {
   try {
-    // Web identity guard (2026-09-16, P2-E): refused before the KDF runs, so a
-    // web build without the dev flag derives nothing, not even in memory.
-    if (WEB_PHRASE_BLOCKED) { refuseWebPhrase('deriveKeysFromPhrase'); return null; }
     if (!phrase || typeof phrase !== 'string') return null;
     // Normalize: lowercase, collapse all whitespace (tabs, newlines, double spaces) to single space
     const words = phrase.toLowerCase().trim().replace(/\s+/g, ' ');
@@ -2816,9 +2693,6 @@ export const probeSecurePin = async (type = 'main') => {
  * NaCl secretbox key, adding a second layer of defense.
  */
 export const saveSecurePhrase = async (phrase) => {
-  // Web identity guard (2026-09-16, P2-E): a web build never stores a phrase.
-  // Callers already treat false as "could not store", which is the truth here.
-  if (WEB_PHRASE_BLOCKED) { refuseWebPhrase('saveSecurePhrase'); return false; }
   if (!phrase || typeof phrase !== 'string') {
     console.warn('saveSecurePhrase: Invalid phrase');
     return false;
@@ -2844,10 +2718,6 @@ export const saveSecurePhrase = async (phrase) => {
 };
 
 export const getSecurePhrase = async () => {
-  // Web identity guard (2026-09-16, P2-E): the read is refused as well as the
-  // write, so a phrase left in IndexedDB by an earlier dev-flag session at the
-  // same origin can never be served to a build without the flag.
-  if (WEB_PHRASE_BLOCKED) { refuseWebPhrase('getSecurePhrase'); return null; }
   const stored = await safeSecureStoreGet(SECURE_KEYS.RECOVERY_PHRASE);
   if (!stored) return null;
   // Decrypt if encrypted (prefixed with 'enc:')
@@ -4123,10 +3993,7 @@ export const deserializeSession = (data) => {
 //
 // STATUS: ACTIVE — implemented via the native PQClean reference port in
 // modules/native-crypto. Constant-time C, hardware-friendly, available
-// on both iOS (CocoaPod) and Android (NDK + JNI). On web (2026-09-16)
-// modules/native-crypto/index.web.ts runs ML-KEM-768 in @noble/post-quantum
-// (FIPS 203 in JS, not constant-time C); the web security page must say
-// so, and that wording is an owner item. The pure-JS `mlkem`
+// on both iOS (CocoaPod) and Android (NDK + JNI). The pure-JS `mlkem`
 // npm package was removed in 7.1.0 because its ESM package.exports
 // shape was incompatible with Metro's resolver under Hermes lazy-load.
 //
@@ -4148,8 +4015,7 @@ export const deserializeSession = (data) => {
 // CocoaPod and on Android via NDK + JNI. Both platforms call only the
 // _derand variants of PQClean's API; coins are sourced from the
 // platform CSPRNG (SecRandomCopyBytes / SecureRandom) by the native
-// layer. On iOS and Android the JS layer never touches the lattice math;
-// on web the shim above is the lattice math.
+// layer. JS never touches the lattice math.
 //
 // `_e.pqDisabled` is retained as a runtime kill-switch — set to `true`
 // to force-fall-back to classical-only crypto without a code push.
@@ -4212,10 +4078,6 @@ const PQ_KDF_SALT_V1 = 'theshft_pq_kem_v1';
 const PQ_HKDF_INFO_V1 = 'theshft-mlkem768-identity-v1';
 export const derivePqCoinsFromPhrase = async (phrase) => {
   try {
-    // Web identity guard (2026-09-16, P2-E): same rule as the classical
-    // derivation above. pqGenerateKeyPair with NO coins (a device key) is
-    // untouched: that is what a linked browser will mint under P1.
-    if (WEB_PHRASE_BLOCKED) { refuseWebPhrase('derivePqCoinsFromPhrase'); return null; }
     if (!phrase || typeof phrase !== 'string') return null;
     const words = phrase.toLowerCase().trim().replace(/\s+/g, ' ');
     const phraseHash = sha256(words);

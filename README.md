@@ -1,18 +1,20 @@
 # theSHFT encryption module
 
 This repository is a verbatim mirror of `config/encryption.js`, the file
-theSHFT (theshft.app) ships inside its iOS and Android apps. It is published
-so the protocol can be read and reviewed. The app, the server, the
-moderation code and the Firestore rules are closed source; only this module
-is published.
+theSHFT (theshft.app) ships inside its iOS app. It is published so the
+protocol can be read and reviewed. The app, the server, the moderation code
+and the Firestore rules are closed source; only this module is published.
+Android is not yet in any store; this mirror will cover it once it is.
 
-Mirrored from app commit `3d4616a6dc31f6a0060b515087dbdcab0fa970e7`, app
-version 9.4.1. See `MANIFEST.json` for the exact commit and file hash, and
-`PARITY.json` for the value the app's own test suite checks against on every
-tagged release. The security of the app does not rest on this code staying
-secret (Kerckhoffs's principle): the same JavaScript already ships inside
-every installed copy of the app. Publishing changes who can read it, not
-what exists.
+This mirror matches **App Store build 69, tag `v9.4.0`**, app commit
+`76b0e45770ca640f74074cb3b3a5cb264b300688`. See `MANIFEST.json` for the
+exact commit and file hash, and `PARITY.json` for the value the app's own
+test suite checks against on every tagged release. The next republish
+follows each subsequent App Store release, from that release's tag; this
+repository is never republished from `main` between releases. The security
+of the app does not rest on this code staying secret (Kerckhoffs's
+principle): the same JavaScript already ships inside every installed copy
+of the app. Publishing changes who can read it, not what exists.
 
 ## What this repository republishes
 
@@ -31,7 +33,14 @@ what exists.
   ciphertext sizes so the protocol logic is still exercised on every commit.
 - `shims/`: thin stand-ins for app-only modules `config/encryption.js`
   imports (local storage, Firestore, React Native, Expo, telemetry). None of
-  them touch cryptography; each one is a few lines and is listed below.
+  them touch cryptography; each one is a few lines:
+  `shims/react-native.js`, `shims/async-storage.js`,
+  `shims/react-native-quick-crypto.js`, `shims/firebase-firestore.js`,
+  `shims/expo-file-system.js`, `shims/expo-secure-store.js`,
+  `shims/config/perfTracing.js`, `shims/config/environment.js`,
+  `shims/config/secureStore.js`, `shims/config/telemetry.js`,
+  `shims/config/storage.js`, `shims/config/database.js`,
+  `shims/config/dbCrypto.js`, `shims/app/components/Toast.js`.
 
 ## What is in scope, and what is not
 
@@ -45,13 +54,15 @@ what exists.
   happens once, at session start (X3DH), not per message. When either
   condition is not met, the session runs classically and nothing refuses
   or warns about that fallback today (see Known limits).
-- Groups: a Sender Key wrapped with the same X25519/ML-KEM hybrid HKDF, but
-  only when every member of the group has published a PQ public key. Group
-  PQ is all-or-nothing per key; a single classical member drops the whole
-  group key back to classical.
-- The Sender Key ratchet is per message (one key per message, one-way
-  chain), which limits exposure from a single compromised message key but
-  does not yet delete spent ratchet state.
+- Groups: a Sender Key wrapped with the same X25519/ML-KEM hybrid HKDF, using
+  the wrap KDF in this repository (`config/senderKeyRotation.js`). Whether
+  the wrap runs per member or requires every member to have a PQ public key
+  before it applies at all is gating logic that lives in the closed app, not
+  in this module.
+- The Sender Key ratchet is per message (one key per message, one-way chain)
+  on the `skr1` wire, sent only when every member's app supports it;
+  otherwise the group falls back to `skey2`, one key per epoch instead of
+  per message. Either way, spent ratchet state is not yet deleted (phase B).
 - The PIN key derivation is PBKDF2-HMAC-SHA256 at 600,000 iterations on
   every path that sets or checks a PIN today. Lower iteration counts appear
   only as legacy values the verify path still accepts for PINs set before
@@ -59,8 +70,9 @@ what exists.
 - PBKDF2, SHA-256 and HMAC run through each platform's native crypto
   (CommonCrypto on iOS, `javax.crypto` on Android) when available, with a
   pure JavaScript fallback. ML-KEM-768 runs through the vendored PQClean C
-  library, compiled natively; the JavaScript layer never implements the
-  lattice math itself.
+  library, compiled natively for iOS and Android; the JavaScript layer never
+  implements the lattice math itself. This build has no web entry point for
+  the native module; a later mirror will say so if and when one ships.
 
 **Explicitly not in scope, and not claimed:**
 
@@ -91,12 +103,17 @@ what exists.
    back to classical X3DH silently. There is no local warning and no refusal
    to proceed. Status: the same prekey-binding release above adds a refusal
    when a peer has previously advertised a PQ key and stops advertising one.
-3. **The identity signing key is self-published.** There is no third party
-   or transparency log attesting to a user's public key; a compromised
-   server could present a substituted key to a new contact. This is the same
-   trust model as an unaudited TOFU (trust-on-first-use) safety number
-   comparison, not a signed key directory. Status: no fix scheduled; the
-   safety number comparison flow is the mitigation today.
+3. **The signed prekey's signing key is unpinned and not in the safety
+   number.** `initSessionFromPrekeyBundle` verifies the signed prekey against
+   a `signingPublicKey` served beside it in the same server document
+   (`fetchPrekeyBundle`). Nothing pins that signing key to the peer across
+   sessions, and it is absent from the safety number comparison, so a
+   malicious server can swap both the signed prekey and the signing key
+   together, re-sign with its own key, and pass verification even for an
+   existing contact. Status: pinning and safety number v2 are landing
+   together in the prekey-binding release (see the app repository's
+   `docs/plans/2026-09-18-prekey-binding.md`); a key transparency log is not
+   scheduled.
 
 This section names known weaknesses with enough specificity that a reader
 does not need to find them independently. It will be updated, not deleted,
@@ -123,21 +140,27 @@ This runs the vendored protocol tests (`__tests__/`) against
 `config/encryption.js`, using `test-utils/nativeCryptoTestDouble.js` in
 place of the native ML-KEM-768 module (wired through `jest.config.js`'s
 `moduleNameMapper`, the same mapping the app repository uses in its own
-test suite). A public GitHub Actions workflow
-(`.github/workflows/vectors.yml`) runs the same tests, plus a standalone
-ML-KEM-768 known-answer check against `@noble/post-quantum`, on every push
-and pull request.
+test suite). `tests/crypto-vectors.js` is a standalone known-answer check,
+run separately, covering NaCl `box` and `secretbox`, nonce handling, BIP39,
+PBKDF2 against the RFC 6070 test vectors, replay rejection, out-of-order
+delivery, and sender key rotation. It does not check ML-KEM-768; there is
+no ML-KEM-768 known-answer test in this repository today. A public GitHub
+Actions workflow (`.github/workflows/vectors.yml`) runs both the vendored
+Jest suite and `tests/crypto-vectors.js` on every push and pull request.
 
 ## Republishing (for the owner)
 
-`scripts/publish-crypto-repo.js` in the app repository regenerates this
-repository's `config/`, `test-utils/`, vendored `__tests__/`, `modules/`,
-`MANIFEST.json` and `PARITY.json` from the app's shipped (git `HEAD`) file.
-Run it, review the diff, commit on a branch here, then tag the release
-(`v<app version>`) once merged to `main`. The app repository's
-`__tests__/cryptoParity.test.js` and its tag-gated `crypto-parity` CI job
-check that the hash shown in the app's About screen still matches
-`PARITY.json` here.
+`scripts/publish-crypto-repo.js --tag v<app version>` in the app repository
+regenerates this repository's `config/`, `test-utils/`, vendored
+`__tests__/`, `modules/`, `MANIFEST.json` and `PARITY.json` from the file at
+that App Store release tag, never from `main` between releases, because the
+mirror must be the file App Store users actually run. Run it, review the diff,
+commit on a branch here, then push the same tag once merged to `main`. The
+app repository's `__tests__/cryptoParity.test.js` and
+`.github/workflows/crypto-parity.yml` (tag-gated) check that the hash
+recorded in the app's bundled `config/cryptoParity.json`, shown on the About
+screen, still matches `git show <tag>:config/encryption.js` for the tag
+`PARITY.json` here records.
 
 ## Reporting a vulnerability
 

@@ -1,10 +1,11 @@
 {
   "publishedFrom": "hiddenapp",
-  "appCommit": "3d4616a6dc31f6a0060b515087dbdcab0fa970e7",
-  "appVersion": "9.4.1",
+  "tag": "v9.4.0",
+  "appCommit": "76b0e45770ca640f74074cb3b3a5cb264b300688",
+  "appVersion": "9.4.0",
   "sourceFile": "config/encryption.js",
-  "sha256": "f73e977b33999d0b32398a1c2d3f0e5c4e6cfc880b33aa6b4b3a641257b1f822",
-  "lines": 6539,
-  "publishedAt": "2026-09-18",
-  "note": "Mirrors the file the app runs at app.json version 9.4.1. This is not yet an App Store build tag; the owner tags v9.4.1 once this branch is reviewed and merged. Republish at every subsequent App Store release, never from main between releases."
+  "sha256": "3858465c478d475f99c53588349123a3898116d11464d7b602baccdd2989ee43",
+  "lines": 6401,
+  "publishedAt": "2026-09-19",
+  "note": "Mirrors the file the App Store build tagged above runs. Republish from that tag at every subsequent App Store release; never publish main between releases."
 }

@@ -6,8 +6,9 @@ Email support@theshft.app with a description of the issue and, if you have
 one, a proof of concept. Please do not open a public GitHub issue for a
 vulnerability report.
 
-We will acknowledge your report within three business days. We do not run a
-paid bug bounty program.
+We will make a best effort to acknowledge your report; there is no fixed
+acknowledgement window today, and this section will say so plainly once the
+owner commits to one. We do not run a paid bug bounty program.
 
 ## Scope
 

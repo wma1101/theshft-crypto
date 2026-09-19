@@ -23,18 +23,15 @@
 // still requires a device/simulator runner. That is a smaller gap than "PQ was
 // never tested", which is what the alternative was.
 //
-// ── WHERE THIS RUNS ─────────────────────────────────────────────────────────
-// This file is wired in through jest.config.js moduleNameMapper ONLY; Metro
-// never resolves it. Since 2026-09-16 @noble/post-quantum is a runtime
-// dependency because the WEB build runs ML-KEM-768 through it
-// (modules/native-crypto/index.web.ts, resolved by Metro on web only). The
-// iOS and Android bundles are unchanged: the native module answers there, the
-// web shim is absent from their source maps, and where the native module is
-// missing PQ still degrades to classical as before. config/encryption.js
-// records that the previous pure-JS `mlkem` package was REMOVED because its
-// ESM package.exports shape broke Metro's resolver under Hermes lazy-load;
-// @noble/post-quantum ships a plain ESM entry that Metro resolves cleanly
-// (proven by the web export gate in __tests__/nativeCryptoWeb.test.js).
+// ── WHY NOT IN THE APP ──────────────────────────────────────────────────────
+// @noble/post-quantum is a devDependency and this file is wired in through
+// jest.config.js moduleNameMapper ONLY, so Metro never resolves either of them
+// and the shipped bundle is byte-identical. That matters: config/encryption.js
+// records that the previous pure-JS `mlkem` package was REMOVED because its ESM
+// package.exports shape broke Metro's resolver under Hermes lazy-load. Putting
+// a JS PQ implementation back into the production path would risk repeating
+// exactly that. Production behaviour is unchanged: on device the native module
+// answers, and where it does not, PQ still degrades to classical as before.
 
 const { ml_kem768 } = require('@noble/post-quantum/ml-kem.js');
 

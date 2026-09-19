@@ -1,7 +1,7 @@
 {
   "name": "native-crypto",
   "version": "1.0.0",
-  "main": "index",
+  "main": "index.ts",
   "expo": {
     "autolinking": {
       "nativeModulesDir": "."

@@ -2,18 +2,18 @@
 // key/value store in the app). Backed by an in-memory Map.
 const mem = new Map();
 
+// Names and values copied verbatim from the app's config/storage.js KEYS
+// table, restricted to the entries config/encryption.js actually reads
+// (grep 'KEYS\.' in config/encryption.js). scripts/publish-crypto-repo.js
+// checks every KEYS.X referenced there exists here before it will publish.
 const KEYS = {
-  IDENTITY_PHRASE: 'identityPhrase',
-  IDENTITY_KEYPAIR: 'identityKeyPair',
-  SIGNED_PREKEY: 'signedPrekey',
-  ONE_TIME_PREKEYS: 'oneTimePrekeys',
-  PQ_IDENTITY: 'pqIdentity',
-  RATCHET_STATE: 'ratchetState',
-  SENDER_KEYS: 'senderKeys',
-  SKIPPED_KEYS: 'skippedKeys',
-  DEVICE_ID: 'deviceId',
-  PIN_HASH: 'pinHash',
-  PIN_SALT: 'pinSalt',
+  USER: '@user',
+  HAS_COMPLETED_SETUP: '@has_completed_setup',
+  IDENTITIES: '@identities',
+  ACTIVE_IDENTITY: '@active_identity',
+  PIN_LENGTH: '@pin_length',
+  SIGNED_PREKEY_ID: '@signed_prekey_id',
+  SIGNED_PREKEY_PRIVATE_PREV: '@signed_prekey_private_prev',
 };
 
 module.exports = {
