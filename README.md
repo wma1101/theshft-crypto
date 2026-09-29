@@ -72,14 +72,29 @@ of the app. Publishing changes who can read it, not what exists.
   pure JavaScript fallback. ML-KEM-768 runs through the vendored PQClean C
   library, compiled natively for iOS and Android; the JavaScript layer never
   implements the lattice math itself. This build has no web entry point for
-  the native module; a later mirror will say so if and when one ships.
+  the native module; a later mirror will say so if and when one ships. A
+  runtime flag (`pqDisabled`, off by default, set automatically if the
+  native module fails to load) forces every PQ function above to return
+  `null`, which is the same as the peer having no PQ prekey: the session
+  falls back to classical X3DH.
+- Local passphrase-protected backup of session and key material
+  (`deriveBackupKey`, `encryptBackup`, `decryptBackup`), and a best-effort
+  overwrite of sensitive values before they are dropped (`secureShred`,
+  `secureShredBatch`, `secureShredSession`) — both present and exported by
+  this file; how and when the app calls them is closed-app logic, not
+  verifiable from this repository.
 
 **Explicitly not in scope, and not claimed:**
 
 - No sender identity hiding on the send path: the server sees who sent each
   message. A receive side branch for hidden sender envelopes exists, but
   nothing calls the corresponding send path today, so it is not a feature.
-- No cross-signing or device-verification protocol beyond the safety number
+- Cross-device key signing code exists in this file (`generateCrossSigningKeys`,
+  `signDeviceKey`, `verifyDeviceSignature`, `verifyCrossSigningChain`,
+  `signUserMasterKey`), but nothing in this repository or in the app's own
+  published claims wires it into a feature; treat it as unused scaffolding,
+  not a cross-signing or multi-device verification claim. The only
+  contact-verification feature actually claimed is the safety number
   comparison in `config/safetyNumberQr.js`.
 - No TreeKEM/MLS. Groups use Sender Key, not a tree-based group protocol.
 - No external security audit has been commissioned on this code or on the
